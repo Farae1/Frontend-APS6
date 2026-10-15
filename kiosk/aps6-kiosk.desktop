@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=APS-6 Quiosque
+Comment=Acesso por biometria facial em tela cheia
+Exec=sh -c '"$HOME/.local/share/aps6-kiosk/start.sh"'
+Icon=camera-web
+Terminal=false
+Categories=Utility;
