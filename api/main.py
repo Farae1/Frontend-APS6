@@ -109,14 +109,16 @@ def sign_in(capture1: Capture, capture2: Capture):
 @app.post("/register", status_code=201)
 def register(name: Annotated[str, Form(min_length=3, max_length=120)], level: Annotated[Level, Form()], capture1: Capture, capture2: Capture):
     """Checks the faces right away: 422 "unusable-capture" (no face, or the two
-    captures are different people); otherwise the registration goes under
-    review."""
+    captures are different people), 409 "already-registered"; otherwise the
+    registration goes under review."""
     try:
         vectors, problem = check_faces(read_photo(capture1), read_photo(capture2))
     except ValueError:
         raise HTTPException(422, "unusable-capture")
     except face_client.FaceServiceError:
         raise HTTPException(503, "face service unavailable")
+    if problem == "already-registered":
+        raise HTTPException(409, problem)
     if problem:
         raise HTTPException(422, "unusable-capture")
     employee = employees.create(name.strip(), level)
