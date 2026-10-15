@@ -1,0 +1,157 @@
+/* The face capture screen: the video underneath, the green cover with the
+   oval on top. Colors come from the app theme (--green, --white...). */
+
+.face-capture {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--green);
+}
+
+.face-capture__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* mirror */
+  background: var(--green-dark);
+}
+
+.face-overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.face-overlay__cover {
+  fill: var(--green);
+}
+
+.face-overlay__track,
+.face-overlay__progress {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.face-overlay__track {
+  stroke: rgb(255 255 255 / 0.35);
+  stroke-width: 4;
+}
+
+.face-overlay__progress {
+  stroke: var(--white);
+  stroke-width: 8;
+  filter: drop-shadow(0 0 6px rgb(255 255 255 / 0.6));
+  transition: opacity 0.25s;
+}
+
+/* The "click" of the photo: the oval flashes white */
+.face-overlay__flash {
+  fill: var(--white);
+  opacity: 0;
+  animation: face-flash 0.55s ease-out;
+}
+
+@keyframes face-flash {
+  0% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.face-capture__header {
+  position: absolute;
+  top: max(28px, env(safe-area-inset-top));
+  left: var(--gutter);
+  right: var(--gutter);
+  text-align: center;
+}
+
+.face-capture__steps {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.face-capture__steps li {
+  width: 28px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.3);
+  transition: background 0.3s;
+}
+
+.face-capture__steps li.current {
+  background: rgb(255 255 255 / 0.6);
+}
+
+.face-capture__steps li.done {
+  background: var(--white);
+}
+
+.face-capture__footer {
+  position: absolute;
+  left: var(--gutter);
+  right: var(--gutter);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+}
+
+.face-capture__hint {
+  margin: 0 0 4px;
+  min-height: 1.5em;
+  font-size: 1.1rem;
+  color: var(--white-soft);
+  transition: color 0.2s;
+}
+
+.face-capture__hint--ok {
+  color: var(--white);
+  font-weight: 600;
+}
+
+.face-capture__check {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5em;
+  height: 1.5em;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--white);
+  color: var(--green-dark);
+  font-weight: 700;
+  animation: face-pop 0.35s ease-out;
+}
+
+@keyframes face-pop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+}
+
+.face-capture__error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px var(--gutter);
+  background: var(--green);
+  text-align: center;
+}
+
+.face-capture__error p {
+  max-width: 420px;
+  margin: 0 auto 18px;
+  font-size: 1.1rem;
+  color: var(--white-soft);
+}
