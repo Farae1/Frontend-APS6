@@ -1,0 +1,113 @@
+# APS-6: face biometrics access. `docker compose up -d --build`, then open
+# http://localhost:8080 (or https://<this machine>:8443 from a phone).
+#
+#   frontend  nginx: the web app + /api proxy          (frontend/)
+#   api       sign in and registration (both right away) (api/)
+#   face      the face model: photos -> embeddings      (face/)
+#   redis     Redis: the base minister's challenges
+#   database  Postgres: employees, accesses, the vault  (database/)
+#   vectors   Postgres + pgvector: face embeddings      (vectors/)
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://aps6:${DATABASE_PASSWORD:-aps6}@database:5432/aps6
+  VECTORS_URL: postgresql://aps6:${VECTORS_PASSWORD:-aps6}@vectors:5432/vectors
+  REDIS_URL: redis://redis:6379/0
+  FACE_URL: http://face:8001
+  MATCH_SAME_SESSION: ${MATCH_SAME_SESSION:-0.5}
+  MATCH_EMPLOYEE: ${MATCH_EMPLOYEE:-0.5}
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - certs:/etc/nginx/certs
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+      additional_contexts:
+        shared: ./shared
+    environment:
+      <<: *backend-env
+      TOKEN_MINUTES: ${TOKEN_MINUTES:-10}
+      # Empty: a random one at each start (sessions end on restart).
+      TOKEN_SECRET: ${TOKEN_SECRET:-}
+    depends_on:
+      database:
+        condition: service_healthy
+      vectors:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      face:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+
+  face:
+    build: ./face
+    environment:
+      FACE_THREADS: ${FACE_THREADS:-2}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      start_period: 60s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: aps6
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-aps6}
+      POSTGRES_DB: aps6
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "aps6", "-d", "aps6"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  vectors:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: aps6
+      POSTGRES_PASSWORD: ${VECTORS_PASSWORD:-aps6}
+      POSTGRES_DB: vectors
+    volumes:
+      - vectors:/var/lib/postgresql/data
+      - ./vectors/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "aps6", "-d", "vectors"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  certs:
+  redis:
+  database:
+  vectors:
