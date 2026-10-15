@@ -5,14 +5,21 @@ Biometrics
 - POST /register              registration: runs the biometrics right away too
 - GET  /registrations/{id}    the status of a registration
 
+Base minister
+- GET  /auth/challenge        public key + one-time nonce to encrypt the password
+- POST /auth/base             encrypted password -> session
+
 The endpoints are plain functions: FastAPI runs them in a thread pool, so a
 slow face check doesn't hold the other requests.
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 import auth
 from common import embeddings, employees, face_client, hierarchy, settings
@@ -21,11 +28,18 @@ from common.employees import Employee
 from common.registration import check_faces
 
 app = FastAPI(title="APS-6 API")
+log = logging.getLogger("uvicorn.error")
 
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
 Capture = Annotated[UploadFile, File()]
 Level = Literal["ANALYST", "MANAGER", "MINISTER"]
+
+
+@app.exception_handler(auth.AuthError)
+def auth_error(request, error: auth.AuthError):
+    log.warning("%s %s refused: %s", request.method, request.url.path, error.reason)
+    return JSONResponse({"detail": error.reason}, status_code=error.status)
 
 
 def read_photo(upload: UploadFile) -> bytes:
@@ -124,6 +138,25 @@ def register(name: Annotated[str, Form(min_length=3, max_length=120)], level: An
     employee = employees.create(name.strip(), level)
     embeddings.replace(employee.id, vectors)
     return {"status": employee.status, "id": employee.id, "registeredAt": employee.registered_at.isoformat()}
+
+
+# Base minister ------------------------------------------------------------
+
+
+class EncryptedPassword(BaseModel):
+    nonce: str
+    password: str  # base64 of RSA-OAEP("nonce:password")
+
+
+@app.get("/auth/challenge")
+def challenge():
+    return {"publicKey": auth.PUBLIC_KEY, "nonce": auth.new_challenge()}
+
+
+@app.post("/auth/base")
+def base_sign_in(body: EncryptedPassword):
+    auth.check_base_password(body.nonce, body.password)
+    return session_view("MMA-000001", hierarchy.BASE, "Ministro base")
 
 
 # Declared last: "/registrations/pending" must match before "{employee_id}".
