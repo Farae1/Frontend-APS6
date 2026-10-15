@@ -9,6 +9,11 @@ Base minister
 - GET  /auth/challenge        public key + one-time nonce to encrypt the password
 - POST /auth/base             encrypted password -> session
 
+With a session ("Authorization: Bearer <token>")
+- GET  /secrets                       the vault, up to the session's level
+- GET  /registrations/pending         registrations this session may decide
+- POST /registrations/{id}/approve | /reject
+
 The endpoints are plain functions: FastAPI runs them in a thread pool, so a
 slow face check doesn't hold the other requests.
 """
@@ -17,11 +22,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import auth
+import vault
 from common import embeddings, employees, face_client, hierarchy, settings
 from common.biometrics import combine, similarity
 from common.employees import Employee
@@ -34,6 +40,7 @@ MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
 Capture = Annotated[UploadFile, File()]
 Level = Literal["ANALYST", "MANAGER", "MINISTER"]
+Authorization = Annotated[str | None, Header()]
 
 
 @app.exception_handler(auth.AuthError)
@@ -157,6 +164,48 @@ def challenge():
 def base_sign_in(body: EncryptedPassword):
     auth.check_base_password(body.nonce, body.password)
     return session_view("MMA-000001", hierarchy.BASE, "Ministro base")
+
+
+# With a session -----------------------------------------------------------
+
+
+@app.get("/secrets")
+def list_secrets(authorization: Authorization = None):
+    session = auth.read_token(authorization)
+    return vault.secrets_for(hierarchy.SECRET_LEVELS.get(session["role"], []))
+
+
+@app.get("/registrations/pending")
+def pending_registrations(authorization: Authorization = None):
+    session = auth.read_token(authorization)
+    levels = hierarchy.approvable_levels(session["role"])
+    return [registration_view(e) for e in employees.list_pending(levels)] if levels else []
+
+
+def decidable(employee_id: str, authorization: str | None) -> tuple[Employee, dict]:
+    session = auth.read_token(authorization)
+    candidate = employees.get(employee_id)
+    if candidate is None:
+        raise HTTPException(404, "registration not found")
+    if candidate.status != "UNDER_REVIEW":
+        raise HTTPException(409, f"registration is {candidate.status}")
+    if not hierarchy.can_approve(session["role"], candidate.level):
+        raise HTTPException(403, "not-allowed")
+    return candidate, session
+
+
+@app.post("/registrations/{employee_id}/approve")
+def approve(employee_id: str, authorization: Authorization = None):
+    candidate, session = decidable(employee_id, authorization)
+    return registration_view(employees.approve(candidate.id, session["sub"]))
+
+
+@app.post("/registrations/{employee_id}/reject")
+def reject(employee_id: str, authorization: Authorization = None):
+    candidate, _ = decidable(employee_id, authorization)
+    employees.set_status(candidate.id, "REJECTED", "not-approved")
+    embeddings.delete(candidate.id)
+    return registration_view(employees.get(candidate.id))
 
 
 # Declared last: "/registrations/pending" must match before "{employee_id}".
