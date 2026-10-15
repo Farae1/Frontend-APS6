@@ -2,26 +2,30 @@
 
 Biometrics
 - POST /identifier            sign in: runs the biometrics right away, opens a session
+- POST /register              registration: runs the biometrics right away too
+- GET  /registrations/{id}    the status of a registration
 
 The endpoints are plain functions: FastAPI runs them in a thread pool, so a
 slow face check doesn't hold the other requests.
 """
 
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 import auth
 from common import embeddings, employees, face_client, hierarchy, settings
 from common.biometrics import combine, similarity
 from common.employees import Employee
+from common.registration import check_faces
 
 app = FastAPI(title="APS-6 API")
 
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 
 Capture = Annotated[UploadFile, File()]
+Level = Literal["ANALYST", "MANAGER", "MINISTER"]
 
 
 def read_photo(upload: UploadFile) -> bytes:
@@ -67,6 +71,18 @@ def session_view(subject: str, role: str, name: str) -> dict:
     }
 
 
+def registration_view(employee: Employee) -> dict:
+    return {
+        "id": employee.id,
+        "name": employee.name,
+        "level": employee.level,
+        "status": employee.status,
+        "statusReason": employee.status_reason,
+        "registeredAt": employee.registered_at.isoformat(),
+        "approvedBy": employee.approved_by,
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -88,3 +104,30 @@ def sign_in(capture1: Capture, capture2: Capture):
         "accessedAt": accessed_at.isoformat(),
         "session": session_view(employee.id, employee.level, employee.name),
     }
+
+
+@app.post("/register", status_code=201)
+def register(name: Annotated[str, Form(min_length=3, max_length=120)], level: Annotated[Level, Form()], capture1: Capture, capture2: Capture):
+    """Checks the faces right away: 422 "unusable-capture" (no face, or the two
+    captures are different people); otherwise the registration goes under
+    review."""
+    try:
+        vectors, problem = check_faces(read_photo(capture1), read_photo(capture2))
+    except ValueError:
+        raise HTTPException(422, "unusable-capture")
+    except face_client.FaceServiceError:
+        raise HTTPException(503, "face service unavailable")
+    if problem:
+        raise HTTPException(422, "unusable-capture")
+    employee = employees.create(name.strip(), level)
+    embeddings.replace(employee.id, vectors)
+    return {"status": employee.status, "id": employee.id, "registeredAt": employee.registered_at.isoformat()}
+
+
+# Declared last: "/registrations/pending" must match before "{employee_id}".
+@app.get("/registrations/{employee_id}")
+def get_registration(employee_id: str):
+    employee = employees.get(employee_id)
+    if employee is None:
+        raise HTTPException(404, "registration not found")
+    return registration_view(employee)
